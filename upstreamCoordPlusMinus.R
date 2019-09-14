@@ -13,5 +13,5 @@ upstreamCoordPlusMinus = function(rowVector){
     start = as.numeric(secondCoord)
     stop = as.numeric(secondCoord)+200
   }
-  return(list(scaf, start, stop))
+  return(list(scaf, start, stop, geneID, strand))
 }

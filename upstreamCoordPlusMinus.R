@@ -1,4 +1,5 @@
 upstreamCoordPlusMinus = function(rowVector){
+  #DONE
   scaf = as.character(unlist(rowVector[1]))
   firstCoord = as.numeric(unlist(rowVector[2]))
   secondCoord = as.numeric(unlist(rowVector[3]))

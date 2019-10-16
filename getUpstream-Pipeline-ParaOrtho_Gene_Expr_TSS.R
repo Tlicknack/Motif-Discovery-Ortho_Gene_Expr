@@ -2,6 +2,7 @@
 
 # This will use many Rscripts that will be sourced when appropriate:
 #Part1:
+# makeFPKMdir.R
 # upstreamCoordPlusMinus.R
 # gffToBedUpstream.R
 #Part2:
@@ -29,14 +30,30 @@ gffFiles = sort(gffFiles[grep("*-gene.tab", gffFiles)])
 gffFiles[2] = "/N/u/tlicknac/Carbonate/Paramecium_GFF/pcaud-oldgene.tab" #### HARD CODED... pcaud gene names are confusing. 
 message("Make sure that the files are in the proper order!! Sort() should have done it, but double check before proceeding")
 lBEDs = gffToBedUpstream(speciesNames=speciesNames, gffFiles) #lBEDs is a list with a layer of species names, and reach species name has a data frame of upstream coords for every gene
+rm(list = ls()[which(ls() != "lBEDs")])
 save.image(file="/N/dc2/scratch/tlicknac/MotifDiscovery/RData/upstreamBEDcoords.Rdata")
 #####
 
 #Make database for FPKM Vegetative growth expression levels
 fpkmDir = "~/Paramecium_FPKM"
-fpkmFiles = list.files(fpkmDir, pattern="*-fpkm_prot.tab", full.names = T)
-fpkmDb = vector(mode = "list", length = length(spNames))
-names(fpkmDb) = spNames
+fpkmFiles = list.files(fpkmDir, pattern="*-xp.tab", full.names = T)
+fpkmSPnames = spNames[-6]
+fpkmDb = vector(mode = "list", length = length(fpkmSPnames))
+names(fpkmDb) = fpkmSPnames
+fpkmDb$pmultimic = NULL
+for(e in 1:length(fpkmFiles)){
+  spName = fpkmSPnames[e]
+  if(spName != "pmultimic"){
+    fpkmDb[[spName]] = makeFPKMdir(fpkmFiles[e])     
+  }
+}
+setwd("/N/dc2/scratch/tlicknac/MotifDiscovery/RData/")
+rm(list = ls()[which(ls() != "fpkmDb")])
+save.image("fpkmDir.RData")
+
+#####
+
+#Make database of gene orientation and intergenic size
 
 
 #####
@@ -66,6 +83,7 @@ for(z in 1:length(lUpstreams)){  #Fix this to remove the weird NULL
   spUpstream =  spUpstream[-which(as.character(spUpstream) == "NULL")]
   lUpstreams[[z]] = spUpstream
 }
+rm(list = ls()[which(ls() != "lUpstreams")])
 save.image("/N/dc2/scratch/tlicknac/MotifDiscovery/RData/lUpstreams_no_null.RData")
 #####
 
@@ -159,12 +177,16 @@ if(sp == "ptet"){
   upstreamsTet = upstreamsTet[-which(as.character(upstreamsTet) == "NULL")]
   
   lowExprUpstreams = upstreamsTet[lowExpr$geneID]
+  lowExprUpstreams = lowExprUpstreams[-which( as.character(lowExprUpstreams) == "NULL")]
   write.fasta(as.list(as.character(lowExprUpstreams)), names(lowExprUpstreams), file.out = "ptet_lowExpression_upstreams.fasta")
   midExprUpstreams = upstreamsTet[midExpr$geneID]
+  midExprUpstreams = midExprUpstreams[-which(as.character(midExprUpstreams) == "NULL")]
   write.fasta(as.list(as.character(midExprUpstreams)), names(midExprUpstreams), file.out = "ptet_midExpression_upstreams.fasta")
   highExprUpstreams = upstreamsTet[highExpr$geneID]
+  highExprUpstreams = highExprUpstreams[-which(as.character(highExprUpstreams) == "NULL")]
   write.fasta(as.list(as.character(highExprUpstreams)), names(highExprUpstreams), file.out = "ptet_highExpression_upstreams.fasta")
   veryHighExprUpstreams = upstreamsTet[veryHighExpr$geneID]
+  veryHighExprUpstreams = veryHighExprUpstreams[-which(as.character(veryHighExprUpstreams) == "NULL")]
   write.fasta(as.list(as.character(veryHighExprUpstreams)), names(veryHighExprUpstreams), file.out = "ptet_veryHighExpression_upstreams.fasta")
 }
 #}
@@ -255,15 +277,17 @@ library(rtracklayer)
 source("/N/dc2/scratch/tlicknac/MotifDiscovery/Rscripts/fixScafNamesGRanges.R")
 source("/N/dc2/scratch/tlicknac/MotifDiscovery/Rscripts/BEDtoGRanges.R")
 source("/N/dc2/scratch/tlicknac/MotifDiscovery/Rscripts/matchMotifFASTA.R")
+source("/N/dc2/scratch/tlicknac/MotifDiscovery/Rscripts/checkStrandGRangesReturnDistance.R")
 
 setwd("/N/dc2/scratch/tlicknac/MotifDiscovery/RData")
 
 faFileDir = "/N/u/tlicknac/Carbonate/Paramecium_FASTA/StandardNames"
 faFiles = list.files(faFileDir, full.names = T)
 
-motif = "AAATCTTT"
-
 motifDir = list()
+
+motif = "TCAGTT"
+
 motifDir[[motif]] = vector(mode="list", length=length(spNames))  #append motifDir
 names(motifDir[[motif]]) = spNames
 
@@ -282,27 +306,62 @@ for(m in 1:length(faFiles)){                          # THIS TAKES ABOUT 6 MIN P
   spGFF = BEDtoGRanges(spBED) #FUNCTION
   
   #find motif instances in BED coordinates
-  overlaps = findOverlaps(query = dfMatches, subject = spGFF, ignore.strand=T)  #use finOverlaps() between the genomic hits we get and upstream sequences
+  qHits = dfMatches[queryHits(suppressWarnings(findOverlaps(dfMatches, spGFF)))]
+  sHits = spGFF[subjectHits(suppressWarnings(findOverlaps(dfMatches, spGFF)))]
+  qHits$upstreamGene = sHits$upstreamGene
   
-  motifHits = spGFF[subjectHits(overlaps),]
+  #get distance to start codon
+  vDistHits = c()
+  for(h in 1:length(qHits)){  #arghh I have to loop GRanges objects... no lapply() functionality
+    distHits = checkStrandGRangesReturnDistance(qHits[h], sHits[h])
+    vDistHits = append(vDistHits, distHits)
+  }
+  qHits$distToStart = vDistHits
   
   #Convert to df to append to R Object
-  tmpDf = data.frame(seqname=seqnames(motifHits), start=start(motifHits), end=end(motifHits), strand=strand(motifHits), upstreamGene= motifHits$upstreamGene)
+  tmpDf = data.frame(seqname=seqnames(qHits), start=start(qHits), end=end(qHits), strand=strand(qHits), upstreamGene= qHits$upstreamGene, distToStart = qHits$distToStart)
   tmpDf$species = spName
   
   motifDir[[motif]][[spName]] = tmpDf
-  # Export R data
-  outImage = paste("motif_", motif, ".RData", sep="")
-  save.image(file=outImage)
 }
-# Write out the table
+# Export R data
+rm(list = ls()[which(ls() != "motifDir" & ls() != "motif")])
+outImage = paste("motif_", motif, ".RData", sep="")
+save.image(file=outImage)
+
+#####
+# Add Expression data
 library(dplyr)
+motif = "TCCCGC"
+
+load("/N/dc2/scratch/tlicknac/MotifDiscovery/RData/fpkmDb.RData")
+load("../RData/motif_TCAGTT.RData")
 outTable = bind_rows(motifDir[[motif]])
+outTable$FPKM = NA
+outTable$motif = motif
+
+for(zzz in 1:nrow(outTable)){  # THIS TAKES 0-40MIN depending on number of motif hits.... (CCCCCC was instant, AAAAAA took 40min)
+  outRow = outTable[zzz,]
+  newVal = as.numeric(fpkmDb[[outRow$species]] [which( names(fpkmDb[[outRow$species]]) == outRow$upstreamGene)])
+  
+  if(identical(newVal, numeric(0)) == F){
+    outTable[zzz,"FPKM"] = newVal 
+  }
+}
+setwd("/N/dc2/scratch/tlicknac/MotifDiscovery/RData")
+rm(list= ls()[which(ls() != "outTable" & ls() != "motif")])
+outImage2 = paste("motif_", motif, "_withExpression.RData", sep="")
+save.image(outImage2)
+setwd("/N/dc2/scratch/tlicknac/MotifDiscovery/motifDistributions")
+outTab = paste("motif_", motif, "_withExpression.csv", sep="")
+write.csv(outTable, file=outTab)
+#for(spName in spNames){
+#  lFpkm = fpkmDb[[spName]]
+#fpkmDb[[outTable$species[1]]] [which(names(fpkmDb[[outTable$species[1] ]]) %in% outTable$upstreamGene)]
+#}
 
 
-########################################################################################################
-# Add expression levels to each gene
-#load("/N/dc2/scratch/tlicknac/MotifDiscovery/RData/motif_AAATCTTT.RData")
+
 
 
 
